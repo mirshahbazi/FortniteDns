@@ -31,6 +31,12 @@ TRANSLATIONS = {
 
         "label.add_manual_dns": "Add Manual DNS:",
         "label.manual_hint": "(name / primary IP / secondary IP)",
+        "placeholder.name": "Name",
+        "placeholder.primary": "Primary IP",
+        "placeholder.secondary": "Secondary IP",
+        "section.network": "Network",
+        "section.actions": "Tests & Actions",
+        "section.results": "Results",
         "button.add": "+ Add",
 
         "status.loading": "Loading DNS list...",
@@ -213,6 +219,12 @@ TRANSLATIONS = {
 
         "label.add_manual_dns": "افزودن DNS دستی:",
         "label.manual_hint": "(نام / آی‌پی اصلی / آی‌پی کمکی)",
+        "placeholder.name": "نام",
+        "placeholder.primary": "آی‌پی اصلی",
+        "placeholder.secondary": "آی‌پی کمکی",
+        "section.network": "شبکه",
+        "section.actions": "تست‌ها و عملیات",
+        "section.results": "نتایج",
         "button.add": "+ افزودن",
 
         "status.loading": "در حال بارگذاری لیست DNS...",
