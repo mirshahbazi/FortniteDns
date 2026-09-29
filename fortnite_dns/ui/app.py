@@ -24,7 +24,7 @@ from ..tcp_pinger import TcpPinger
 from ..testers import FastDnsTester, FortniteDnsTester
 from ..tracer import RouteTracer
 from ..utils import is_admin, is_ipv4, relaunch_as_admin
-from . import theme
+from . import theme, widgets
 
 
 class App:
@@ -72,8 +72,7 @@ class App:
         self.online_dns = []
         self.custom_dns = self.config_store.get_custom_dns()
 
-        self.root.geometry("1250x820")
-        self.root.minsize(1050, 720)
+        self.fit_window_to_screen()
         self.root.configure(bg=theme.BG)
 
         self.build_style()
@@ -107,6 +106,46 @@ class App:
 
     def build_style(self):
         theme.configure_style()
+        theme.style_combobox_popup(self.root)
+
+    def center_dialog(self, win):
+
+        if not win.winfo_exists():
+            return
+
+        win.update_idletasks()
+
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+
+        x = max(0, rx + (rw - w) // 2)
+        y = max(0, ry + (rh - h) // 3)
+
+        win.geometry(f"+{x}+{y}")
+
+    def fit_window_to_screen(self):
+        """
+        Opens at a size that suits the current screen (instead of a
+        fixed 1250x820 that overflowed small laptop displays) and
+        allows shrinking far enough for half-screen snapping; the
+        layout reflows to fit.
+        """
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        width = max(760, min(1280, int(screen_w * 0.85)))
+        height = max(560, min(860, int(screen_h * 0.85)))
+
+        width = min(width, screen_w)
+        height = min(height, screen_h - 40)
+
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 3)
+
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.minsize(min(720, screen_w), min(600, screen_h - 40))
 
     # ========================================================
     # LANGUAGE
@@ -142,296 +181,291 @@ class App:
 
         self.root.title(f"{self.t('app.title')} {VERSION}")
 
-        # HEADER
-        header = tk.Frame(self.root, bg=theme.BG)
+        # Everything lives in one container so a language switch
+        # (which destroys root's children) also drops the resize
+        # bindings attached below.
+        main = tk.Frame(self.root, bg=theme.BG)
+        main.pack(fill="both", expand=True, padx=20, pady=(16, 10))
 
-        header.pack(
-            fill="x",
-            padx=25,
-            pady=(20, 10)
-        )
+        main.columnconfigure(0, weight=1)
 
-        header_left = tk.Frame(header, bg=theme.BG)
-        header_left.pack(side="left", fill="x", expand=True)
+        # The table row absorbs all spare height but never drops
+        # below a usable minimum; on very short windows the footer
+        # is clipped instead of the results.
+        main.rowconfigure(4, weight=1, minsize=130)
 
-        header_right = tk.Frame(header, bg=theme.BG)
-        header_right.pack(side="right")
+        self.compact = None
+        self.compact_widgets = []
+
+        self.build_header(main)
+        self.build_toolbar(main)
+        self.build_manual_entry(main)
+        self.build_progress(main)
+        self.build_table(main)
+        self.build_footer(main)
+
+        main.bind("<Configure>", self.on_main_resize)
+
+    def build_header(self, parent):
+
+        header = tk.Frame(parent, bg=theme.BG)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        header.columnconfigure(0, weight=1)
 
         tk.Label(
-            header_left,
+            header,
             text=f"🎮 {self.t('app.title')}",
             bg=theme.BG,
             fg=theme.TEXT,
-            font=("Segoe UI", 23, "bold")
-        ).pack(anchor="w")
+            font=theme.FONT_TITLE,
+            anchor="w"
+        ).grid(row=0, column=0, sticky="w")
 
-        tk.Label(
-            header_left,
+        self.subtitle_label = tk.Label(
+            header,
             text=self.t("app.subtitle"),
             bg=theme.BG,
             fg=theme.MUTED,
-            font=("Segoe UI", 10)
-        ).pack(anchor="w", pady=(3, 0))
-
-        tk.Button(
-            header_right,
-            text=self.t("button.language"),
-            command=self.toggle_language,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            padx=10,
-            pady=6
-        ).pack(side="right", padx=(6, 0))
-
-        tk.Button(
-            header_right,
-            text=self.t("button.about"),
-            command=self.show_about,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            padx=10,
-            pady=6
-        ).pack(side="right")
-
-        # CONTROL BAR
-        control = tk.Frame(
-            self.root,
-            bg=theme.CARD,
-            padx=15,
-            pady=13
+            font=theme.FONT_SUBTITLE,
+            anchor="w",
+            justify="left"
         )
 
-        control.pack(fill="x", padx=25, pady=8)
+        self.subtitle_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
 
-        tk.Label(
-            control,
+        self.compact_widgets.append(self.subtitle_label)
+
+        header_right = tk.Frame(header, bg=theme.BG)
+        header_right.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0))
+
+        widgets.make_button(
+            header_right,
+            self.t("button.about"),
+            self.show_about,
+            bold=False,
+            padx=12,
+            pady=5
+        ).pack(side="left", padx=(0, 6))
+
+        widgets.make_button(
+            header_right,
+            self.t("button.language"),
+            self.toggle_language,
+            bold=False,
+            padx=12,
+            pady=5
+        ).pack(side="left")
+
+    def build_toolbar(self, parent):
+
+        card = widgets.make_card(parent)
+        card.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        card.columnconfigure(0, weight=1)
+
+        # --- Network row: adapter picker + current DNS -------
+        self.add_section_label(card, self.t("section.network"), row=0)
+
+        network = widgets.FlowFrame(card, bg=theme.CARD)
+        network.grid(row=1, column=0, sticky="ew")
+
+        network.add(tk.Label(
+            network,
             text=self.t("label.adapter"),
             bg=theme.CARD,
-            fg=theme.TEXT
-        ).grid(row=0, column=0, padx=(0, 5))
+            fg=theme.TEXT,
+            font=theme.FONT_BODY
+        ))
 
         self.adapter_var = tk.StringVar()
 
-        self.adapter_combo = ttk.Combobox(
-            control,
+        self.adapter_combo = network.add(ttk.Combobox(
+            network,
             textvariable=self.adapter_var,
             state="readonly",
-            width=25
+            width=24,
+            font=theme.FONT_BODY
+        ))
+
+        self.adapter_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self.update_current_dns()
         )
 
-        self.adapter_combo.grid(row=0, column=1, padx=5)
+        network.add(widgets.make_button(
+            network,
+            "↻",
+            self.load_adapters,
+            padx=10
+        ))
 
-        tk.Button(
-            control,
-            text="↻",
-            command=self.load_adapters,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            width=4
-        ).grid(row=0, column=2, padx=4)
+        self.online_button = network.add(widgets.make_button(
+            network,
+            self.t("button.update_dns_list"),
+            self.update_online_clicked,
+            bold=False
+        ))
 
-        self.online_button = tk.Button(
-            control,
-            text=self.t("button.update_dns_list"),
-            command=self.update_online_clicked,
+        self.current_dns_var = tk.StringVar(value="...")
+
+        self.current_dns_label = network.add(tk.Label(
+            network,
+            textvariable=self.current_dns_var,
             bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
+            fg=theme.GREEN,
+            font=theme.FONT_BOLD,
+            anchor="w",
             padx=12,
-            pady=7
+            pady=6
+        ), stretch=True)
+
+        tk.Frame(card, bg=theme.BORDER, height=1).grid(
+            row=2, column=0, sticky="ew", pady=10
         )
 
-        self.online_button.grid(row=0, column=3, padx=(20, 5))
+        # --- Actions row: wraps onto extra lines when narrow --
+        self.add_section_label(card, self.t("section.actions"), row=3)
 
-        self.fast_button = tk.Button(
-            control,
-            text=self.t("button.fast_test"),
-            command=self.start_fast_test,
-            bg=theme.BLUE,
-            fg=theme.WHITE,
-            activebackground=theme.BLUE2,
-            activeforeground=theme.WHITE,
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
+        actions = widgets.FlowFrame(card, bg=theme.CARD)
+        actions.grid(row=4, column=0, sticky="ew")
+
+        self.fast_button = actions.add(widgets.make_button(
+            actions,
+            self.t("button.fast_test"),
+            self.start_fast_test,
+            variant="primary",
             padx=18,
             pady=8
-        )
+        ))
 
-        self.fast_button.grid(row=0, column=4, padx=5)
-
-        self.fortnite_button = tk.Button(
-            control,
-            text=self.t("button.fortnite_test"),
-            command=self.start_fortnite_test,
-            bg="#7c3aed",
-            fg=theme.WHITE,
-            activebackground="#6d28d9",
-            activeforeground=theme.WHITE,
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
+        self.fortnite_button = actions.add(widgets.make_button(
+            actions,
+            self.t("button.fortnite_test"),
+            self.start_fortnite_test,
+            variant="purple",
             padx=18,
             pady=8
-        )
+        ))
 
-        self.fortnite_button.grid(row=0, column=5, padx=5)
-
-        self.apply_button = tk.Button(
-            control,
-            text=self.t("button.apply_best"),
-            command=self.apply_best,
-            bg=theme.GREEN,
-            fg=theme.WHITE,
-            activebackground=theme.GREEN2,
-            activeforeground=theme.WHITE,
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
-            padx=15,
+        self.apply_button = actions.add(widgets.make_button(
+            actions,
+            self.t("button.apply_best"),
+            self.apply_best,
+            variant="success",
             pady=8,
             state="disabled"
-        )
+        ))
 
-        self.apply_button.grid(row=0, column=6, padx=5)
-
-        self.clear_button = tk.Button(
-            control,
-            text=self.t("button.clear_dns"),
-            command=self.clear_dns,
-            bg=theme.RED,
-            fg=theme.WHITE,
-            activebackground=theme.RED2,
-            activeforeground=theme.WHITE,
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
-            padx=13,
+        self.reality_button = actions.add(widgets.make_button(
+            actions,
+            self.t("button.reality_check"),
+            self.start_reality_check,
+            variant="warning",
             pady=8
-        )
+        ))
 
-        self.clear_button.grid(row=0, column=7, padx=5)
+        self.route_button = actions.add(widgets.make_button(
+            actions,
+            self.t("button.route_check"),
+            self.start_route_check,
+            pady=8
+        ))
 
-        self.cancel_button = tk.Button(
-            control,
-            text=self.t("button.cancel"),
-            command=self.cancel_test,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
-            padx=13,
+        self.cancel_button = actions.add(widgets.make_button(
+            actions,
+            self.t("button.cancel"),
+            self.cancel_test,
             pady=8,
             state="disabled"
-        )
+        ))
 
-        self.cancel_button.grid(row=0, column=8, padx=5)
-
-        self.reality_button = tk.Button(
-            control,
-            text=self.t("button.reality_check"),
-            command=self.start_reality_check,
-            bg=theme.YELLOW,
-            fg="#1e1b09",
-            activebackground="#d97706",
-            activeforeground="#1e1b09",
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
-            padx=13,
+        self.clear_button = actions.add(widgets.make_button(
+            actions,
+            self.t("button.clear_dns"),
+            self.clear_dns,
+            variant="danger",
             pady=8
-        )
+        ))
 
-        self.reality_button.grid(row=0, column=9, padx=5)
+    def add_section_label(self, card, text, row):
 
-        self.route_button = tk.Button(
-            control,
-            text=self.t("button.route_check"),
-            command=self.start_route_check,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
-            padx=13,
-            pady=8
-        )
+        label = widgets.make_section_label(card, text)
+        label.grid(row=row, column=0, sticky="w", pady=(0, 6))
 
-        self.route_button.grid(row=0, column=10, padx=5)
+        self.compact_widgets.append(label)
 
-        # MANUAL DNS ENTRY
-        manual = tk.Frame(
-            self.root,
-            bg=theme.CARD,
-            padx=15,
-            pady=10
-        )
+    def build_manual_entry(self, parent):
 
-        manual.pack(fill="x", padx=25, pady=(0, 8))
+        card = widgets.make_card(parent, pady=10)
+        card.grid(row=2, column=0, sticky="ew", pady=(0, 10))
 
-        tk.Label(
+        manual = widgets.FlowFrame(card, bg=theme.CARD)
+        manual.pack(fill="x")
+
+        manual.add(tk.Label(
             manual,
             text=self.t("label.add_manual_dns"),
             bg=theme.CARD,
-            fg=theme.TEXT
-        ).grid(row=0, column=0, padx=(0, 8))
+            fg=theme.TEXT,
+            font=theme.FONT_BOLD
+        ))
 
         self.custom_name_var = tk.StringVar()
         self.custom_primary_var = tk.StringVar()
         self.custom_secondary_var = tk.StringVar()
 
-        tk.Entry(
+        manual.add(widgets.make_entry(
             manual,
-            textvariable=self.custom_name_var,
-            width=16
-        ).grid(row=0, column=1, padx=4)
+            self.custom_name_var,
+            self.t("placeholder.name"),
+            width=11
+        ), stretch=True)
 
-        tk.Entry(
+        primary_entry = manual.add(widgets.make_entry(
             manual,
-            textvariable=self.custom_primary_var,
-            width=16
-        ).grid(row=0, column=2, padx=4)
+            self.custom_primary_var,
+            self.t("placeholder.primary"),
+            width=11
+        ), stretch=True)
 
-        tk.Entry(
+        secondary_entry = manual.add(widgets.make_entry(
             manual,
-            textvariable=self.custom_secondary_var,
-            width=16
-        ).grid(row=0, column=3, padx=4)
+            self.custom_secondary_var,
+            self.t("placeholder.secondary"),
+            width=14
+        ), stretch=True)
 
-        tk.Label(
+        for entry in (primary_entry, secondary_entry):
+            entry.bind("<Return>", lambda e: self.add_custom_dns())
+
+        manual.add(widgets.make_button(
             manual,
-            text=self.t("label.manual_hint"),
-            bg=theme.CARD,
+            self.t("button.add"),
+            self.add_custom_dns,
+            variant="primary",
+            padx=16,
+            pady=5
+        ))
+
+    def build_progress(self, parent):
+
+        progress_frame = tk.Frame(parent, bg=theme.BG)
+        progress_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+
+        self.status_var = tk.StringVar(
+            value=self.t("status.loading")
+        )
+
+        self.status_label = tk.Label(
+            progress_frame,
+            textvariable=self.status_var,
+            bg=theme.BG,
             fg=theme.MUTED,
-            font=("Segoe UI", 8)
-        ).grid(row=0, column=4, padx=8)
+            font=theme.FONT_SMALL,
+            anchor="w",
+            justify="left"
+        )
 
-        tk.Button(
-            manual,
-            text=self.t("button.add"),
-            command=self.add_custom_dns,
-            bg=theme.BLUE,
-            fg=theme.WHITE,
-            activebackground=theme.BLUE2,
-            activeforeground=theme.WHITE,
-            relief="flat",
-            padx=12,
-            pady=4
-        ).grid(row=0, column=5, padx=(8, 0))
-
-        # Progress
-        progress_frame = tk.Frame(self.root, bg=theme.BG)
-
-        progress_frame.pack(fill="x", padx=25, pady=5)
+        self.status_label.pack(fill="x", pady=(0, 4))
 
         self.progress = ttk.Progressbar(
             progress_frame,
@@ -440,49 +474,13 @@ class App:
 
         self.progress.pack(fill="x")
 
-        self.status_var = tk.StringVar(
-            value=self.t("status.loading")
-        )
+    def build_table(self, parent):
 
-        tk.Label(
-            progress_frame,
-            textvariable=self.status_var,
-            bg=theme.BG,
-            fg=theme.MUTED,
-            font=("Segoe UI", 9)
-        ).pack(anchor="w", pady=(4, 0))
+        table_card = widgets.make_card(parent, padx=0, pady=0)
+        table_card.grid(row=4, column=0, sticky="nsew", pady=(0, 10))
 
-        # Current DNS
-        current_frame = tk.Frame(self.root, bg=theme.CARD)
-
-        current_frame.pack(fill="x", padx=25, pady=7)
-
-        self.current_dns_var = tk.StringVar(value="...")
-
-        tk.Label(
-            current_frame,
-            textvariable=self.current_dns_var,
-            bg=theme.CARD,
-            fg=theme.TEXT,
-            font=("Segoe UI", 10, "bold"),
-            padx=12,
-            pady=8
-        ).pack(anchor="w")
-
-        self.adapter_combo.bind(
-            "<<ComboboxSelected>>",
-            lambda e: self.update_current_dns()
-        )
-
-        # TABLE
-        table_frame = tk.Frame(self.root, bg=theme.BG)
-
-        table_frame.pack(
-            fill="both",
-            expand=True,
-            padx=25,
-            pady=8
-        )
+        table_card.rowconfigure(0, weight=1)
+        table_card.columnconfigure(0, weight=1)
 
         columns = (
             "name", "dns", "fast", "success",
@@ -490,98 +488,184 @@ class App:
             "score", "status"
         )
 
+        # A small requested height lets the table shrink on short
+        # windows; the weighted grid row grows it back when there's room.
         self.tree = ttk.Treeview(
-            table_frame,
+            table_card,
             columns=columns,
-            show="headings"
+            show="headings",
+            height=5
         )
 
-        headings = {
-            "name": self.t("table.col.name"),
-            "dns": self.t("table.col.dns"),
-            "fast": self.t("table.col.fast"),
-            "success": self.t("table.col.success"),
-            "bahrain": self.t("table.col.bahrain"),
-            "mumbai": self.t("table.col.mumbai"),
-            "israel": self.t("table.col.israel"),
-            "germany": self.t("table.col.germany"),
-            "uk": self.t("table.col.uk"),
-            "score": self.t("table.col.score"),
-            "status": self.t("table.col.status"),
-        }
-
-        widths = {
-            "name": 140, "dns": 115, "fast": 90, "success": 75,
-            "bahrain": 90, "mumbai": 90, "israel": 90, "germany": 90,
-            "uk": 90, "score": 80, "status": 100
+        # Minimum widths; extra horizontal space is shared out
+        # proportionally in fit_table_columns().
+        self.column_min_widths = {
+            "name": 150, "dns": 115, "fast": 85, "success": 70,
+            "bahrain": 80, "mumbai": 80, "israel": 80, "germany": 80,
+            "uk": 80, "score": 70, "status": 80
         }
 
         for col in columns:
 
-            self.tree.heading(col, text=headings[col])
+            self.tree.heading(col, text=self.t(f"table.col.{col}"))
 
             self.tree.column(
                 col,
-                width=widths[col],
-                anchor="center"
+                width=self.column_min_widths[col],
+                minwidth=self.column_min_widths[col],
+                stretch=False,
+                anchor="w" if col == "name" else "center"
             )
 
-        scrollbar = ttk.Scrollbar(
-            table_frame,
+        self.tree.tag_configure("odd", background=theme.ROW_ALT)
+        self.tree.tag_configure("fail", foreground=theme.FAIL_FG)
+
+        yscroll = ttk.Scrollbar(
+            table_card,
             orient="vertical",
             command=self.tree.yview
         )
 
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        xscroll = ttk.Scrollbar(
+            table_card,
+            orient="horizontal",
+            command=self.tree.xview
+        )
 
-        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.configure(
+            yscrollcommand=yscroll.set,
+            xscrollcommand=xscroll.set
+        )
 
-        scrollbar.pack(side="right", fill="y")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
 
         self.tree.bind("<Double-1>", self.apply_selected)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
-        # Bottom
-        bottom = tk.Frame(
-            self.root,
-            bg=theme.CARD,
-            padx=15,
-            pady=12
+        self.tree.bind(
+            "<Configure>",
+            lambda e: self.fit_table_columns(e.width)
         )
 
-        bottom.pack(fill="x", padx=25, pady=(5, 20))
+    def build_footer(self, parent):
+
+        bottom = widgets.make_card(parent, pady=12)
+        bottom.grid(row=5, column=0, sticky="ew")
+
+        # Green accent strip on the leading edge of the card.
+        tk.Frame(bottom, bg=theme.GREEN, width=4).pack(
+            side="left", fill="y", padx=(0, 12)
+        )
+
+        text_box = tk.Frame(bottom, bg=theme.CARD)
+        text_box.pack(side="left", fill="x", expand=True)
 
         self.best_var = tk.StringVar(
             value=self.t("best.initial")
         )
 
-        tk.Label(
-            bottom,
+        self.best_label = tk.Label(
+            text_box,
             textvariable=self.best_var,
             bg=theme.CARD,
             fg=theme.GREEN,
-            font=("Segoe UI", 13, "bold")
-        ).pack(anchor="w")
+            font=theme.FONT_BEST,
+            anchor="w",
+            justify="left"
+        )
+
+        self.best_label.pack(fill="x")
 
         self.info_var = tk.StringVar(
             value=self.t("info.default")
         )
 
-        tk.Label(
-            bottom,
+        self.info_label = tk.Label(
+            text_box,
             textvariable=self.info_var,
             bg=theme.CARD,
             fg=theme.MUTED,
-            font=("Segoe UI", 9)
-        ).pack(anchor="w", pady=(4, 0))
+            font=theme.FONT_SMALL,
+            anchor="w",
+            justify="left"
+        )
 
-        tk.Label(
-            self.root,
+        self.info_label.pack(fill="x", pady=(3, 0))
+
+        self.footer_label = tk.Label(
+            parent,
             text=self.t("footer.disclaimer"),
             bg=theme.BG,
-            fg="#64748b",
-            font=("Segoe UI", 8)
-        ).pack(pady=(0, 10))
+            fg=theme.SUBTLE,
+            font=theme.FONT_TINY,
+            justify="center"
+        )
+
+        self.footer_label.grid(row=6, column=0, sticky="ew", pady=(6, 0))
+
+        self.compact_widgets.append(self.footer_label)
+
+    # ========================================================
+    # RESPONSIVE LAYOUT
+    # ========================================================
+
+    def on_main_resize(self, event):
+
+        width = event.width
+
+        if width <= 1:
+            return
+
+        # Small windows drop decorative/secondary text (subtitle,
+        # section captions, footer) to leave room for the table.
+        compact = width < 900 or event.height < 680
+
+        if compact != self.compact:
+
+            self.compact = compact
+
+            # grid_remove() remembers each widget's grid options,
+            # so a bare grid() puts it back where it was.
+            for widget in self.compact_widgets:
+
+                if compact:
+                    widget.grid_remove()
+                else:
+                    widget.grid()
+
+        # Long labels wrap instead of forcing the window wider.
+        self.subtitle_label.configure(wraplength=max(200, width - 260))
+        self.status_label.configure(wraplength=max(200, width - 10))
+        self.best_label.configure(wraplength=max(200, width - 60))
+        self.info_label.configure(wraplength=max(200, width - 60))
+        self.footer_label.configure(wraplength=max(200, width - 20))
+
+    def fit_table_columns(self, available):
+        """
+        Stretches columns to fill the table when there's room, and
+        falls back to minimum widths + horizontal scrolling when the
+        window is narrower than the sum of those minimums.
+        """
+
+        if available <= 1:
+            return
+
+        mins = self.column_min_widths
+        total = sum(mins.values())
+
+        scale = max(1.0, available / total)
+
+        widths = {col: int(w * scale) for col, w in mins.items()}
+
+        # Give rounding leftovers to the name column so the last
+        # column lines up with the table edge exactly.
+        if scale > 1.0:
+            widths["name"] += available - sum(widths.values())
+
+        for col, w in widths.items():
+            self.tree.column(col, width=w)
 
     # ========================================================
     # ABOUT
@@ -594,6 +678,7 @@ class App:
         win.configure(bg=theme.CARD)
         win.resizable(False, False)
         win.transient(self.root)
+        self.root.after_idle(lambda: self.center_dialog(win))
 
         tk.Label(
             win,
@@ -678,16 +763,12 @@ class App:
                 fg=theme.MUTED
             ).pack()
 
-        tk.Button(
+        widgets.make_button(
             win,
-            text=self.t("common.close"),
-            command=win.destroy,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            padx=15,
+            self.t("common.close"),
+            win.destroy,
+            bold=False,
+            padx=18,
             pady=6
         ).pack(pady=18)
 
@@ -972,7 +1053,7 @@ class App:
 
             ready_text = self.t("table.status.ready")
 
-            for item in self.dns_list:
+            for index, item in enumerate(self.dns_list):
 
                 self.tree.insert(
                     "",
@@ -981,13 +1062,23 @@ class App:
                         item[0], item[1],
                         "-", "-", "-", "-", "-", "-", "-", "-",
                         ready_text
-                    )
+                    ),
+                    tags=self.row_tags(index)
                 )
 
             return
 
-        for item in self.results:
-            self.insert_result(item)
+        for index, item in enumerate(self.results):
+            self.insert_result(item, index)
+
+    def row_tags(self, index, failed=False):
+
+        tags = ["odd"] if index % 2 else []
+
+        if failed:
+            tags.append("fail")
+
+        return tuple(tags)
 
     def get_row_record(self, index):
         """
@@ -1021,7 +1112,7 @@ class App:
             "secondary": secondary
         }
 
-    def insert_result(self, item):
+    def insert_result(self, item, index=0):
 
         fast = item.get("avg")
         success = item.get("success", 0)
@@ -1070,7 +1161,8 @@ class App:
                 ping("United Kingdom"),
                 score_text,
                 self.t("table.status.ok")
-            )
+            ),
+            tags=self.row_tags(index, failed=fast is None)
         )
 
     # ========================================================
@@ -1545,8 +1637,9 @@ class App:
         win = tk.Toplevel(self.root)
         win.title(self.t("reality.title"))
         win.configure(bg=theme.CARD)
-        win.resizable(False, False)
+        win.minsize(360, 240)
         win.transient(self.root)
+        self.root.after_idle(lambda: self.center_dialog(win))
 
         columns = ("region", "icmp", "tcp", "loss")
 
@@ -1568,7 +1661,7 @@ class App:
 
             tree.insert("", "end", values=(region, icmp_text, tcp_text, loss_text))
 
-        tree.pack(padx=15, pady=15)
+        tree.pack(fill="both", expand=True, padx=15, pady=15)
 
         tk.Label(
             win,
@@ -1580,16 +1673,12 @@ class App:
             wraplength=520
         ).pack(padx=15, pady=(0, 15))
 
-        tk.Button(
+        widgets.make_button(
             win,
-            text=self.t("common.close"),
-            command=win.destroy,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            padx=15,
+            self.t("common.close"),
+            win.destroy,
+            bold=False,
+            padx=18,
             pady=6
         ).pack(pady=(0, 15))
 
@@ -1665,8 +1754,9 @@ class App:
         win = tk.Toplevel(self.root)
         win.title(f"{self.t('route.title')} — {region['region']} ({region['ip']})")
         win.configure(bg=theme.CARD)
-        win.resizable(False, False)
+        win.minsize(360, 240)
         win.transient(self.root)
+        self.root.after_idle(lambda: self.center_dialog(win))
 
         columns = ("hop", "ip", "time")
 
@@ -1674,7 +1764,7 @@ class App:
             win,
             columns=columns,
             show="headings",
-            height=min(len(hops), 20) or 1
+            height=min(len(hops), 14) or 1
         )
 
         tree.heading("hop", text=self.t("route.col.hop"))
@@ -1706,7 +1796,7 @@ class App:
 
         tree.tag_configure("bottleneck", background="#7c2d12", foreground=theme.WHITE)
 
-        tree.pack(padx=15, pady=15)
+        tree.pack(fill="both", expand=True, padx=15, pady=15)
 
         if bottleneck:
 
@@ -1740,16 +1830,12 @@ class App:
             wraplength=520
         ).pack(padx=15, pady=(0, 15))
 
-        tk.Button(
+        widgets.make_button(
             win,
-            text=self.t("common.close"),
-            command=win.destroy,
-            bg=theme.CARD2,
-            fg=theme.TEXT,
-            activebackground="#475569",
-            activeforeground=theme.TEXT,
-            relief="flat",
-            padx=15,
+            self.t("common.close"),
+            win.destroy,
+            bold=False,
+            padx=18,
             pady=6
         ).pack(pady=(0, 15))
 
